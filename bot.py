@@ -12,7 +12,6 @@ order_counter = [0]
 workers = {}
 
 PHONE, DESC = range(2)
-WORKER_PHONE = 0
 
 def main_menu_admin():
     keyboard = [
@@ -88,15 +87,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
 
-    if text == "➕ Zakaz qo'shish" and user_id == ADMIN_ID:
-        await update.message.reply_text(
-            "📞 *Mijozning telefon raqamini kiriting:*\n\nMasalan: +998901234567",
-            parse_mode="Markdown",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        return PHONE
-
-    elif text == "📋 Barcha zakazlar" and user_id == ADMIN_ID:
+    if text == "📋 Barcha zakazlar" and user_id == ADMIN_ID:
         await show_all_orders_admin(update, context)
 
     elif text == "📊 Statistika" and user_id == ADMIN_ID:
@@ -110,6 +101,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     else:
         await update.message.reply_text("❓ Noma'lum buyruq. /start ni bosing.")
+
+async def add_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Siz admin emassiz!")
+        return ConversationHandler.END
+    await update.message.reply_text(
+        "📞 *Mijozning telefon raqamini kiriting:*\n\nMasalan: +998901234567",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return PHONE
 
 async def get_phone_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['phone'] = update.message.text
@@ -144,12 +147,18 @@ async def show_all_orders_admin(update: Update, context: ContextTypes.DEFAULT_TY
         return
     for oid, o in orders.items():
         status = f"👷 {o['worker_name']}" if o['worker_id'] else "⏳ Kutilmoqda"
+        buttons = []
+        if not o['worker_id']:
+            buttons.append(InlineKeyboardButton("✅ Olish", callback_data=f"take_{oid}"))
+        buttons.append(InlineKeyboardButton("🗑 O'chirish", callback_data=f"delete_{oid}"))
+        keyboard = [buttons]
         await update.message.reply_text(
             f"📦 *Zakaz #{oid}*\n"
             f"📞 Mijoz: `{o['phone']}`\n"
             f"📝 {o['desc']}\n"
             f"📌 Holat: {status}",
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -208,7 +217,7 @@ async def take_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Zakaz topilmadi.")
         return
     if orders[oid]['worker_id']:
-        await query.edit_message_text("⚠️ Bu zakaz allaqachon olingan!")
+        await query.answer("⚠️ Bu zakaz allaqachon olingan!", show_alert=True)
         return
 
     orders[oid]['worker_id'] = user_id
@@ -243,6 +252,18 @@ async def done_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.edit_message_text("❌ Zakaz topilmadi.")
 
+async def delete_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    if user_id != ADMIN_ID:
+        await query.answer("❌ Faqat admin o'chira oladi!", show_alert=True)
+        return
+    oid = int(query.data.split("_")[1])
+    if oid in orders:
+        del orders[oid]
+    await query.edit_message_text(f"🗑 *Zakaz #{oid} o'chirildi!*", parse_mode="Markdown")
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Bekor qilindi.", reply_markup=main_menu_admin())
     return ConversationHandler.END
@@ -251,7 +272,7 @@ def main():
     app = Application.builder().token(TOKEN).build()
 
     conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^➕ Zakaz qo'shish$"), handle_message)],
+        entry_points=[MessageHandler(filters.Regex("^➕ Zakaz qo'shish$"), add_order_start)],
         states={
             PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone_admin)],
             DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_desc_admin)],
@@ -265,6 +286,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(take_order, pattern="^take_"))
     app.add_handler(CallbackQueryHandler(done_order, pattern="^done_"))
+    app.add_handler(CallbackQueryHandler(delete_order, pattern="^delete_"))
 
     app.run_polling()
 
